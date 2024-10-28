@@ -123,7 +123,7 @@ def run(args):
     img_save_path = os.path.join(args.save_dir, f"{prompt_key}.png")
     torch_to_pil(img).save(img_save_path)
     print(f"Save path: {img_save_path}")
-        
+    
     
 def parse_args():
     parser = argparse.ArgumentParser()

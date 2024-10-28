@@ -65,8 +65,27 @@ class StableDiffusion(nn.Module):
     ):
         
         # TODO: Implement the loss function for SDS
-        raise NotImplementedError("SDS is not implemented yet.")
-    
+        # raise NotImplementedError("SDS is not implemented yet.")
+
+        # Randomly sample timesteps
+        t = torch.randint(self.min_step, self.max_step + 1, [latents.shape[0]], device=self.device)
+        
+        # Add noise to the latents according to the noise magnitude at each timestep
+        noise = torch.randn_like(latents)
+        latents_noisy = self.scheduler.add_noise(latents, noise, t)
+        
+        # Predict the noise residual
+        noise_pred = self.get_noise_preds(
+            latents_noisy, t, text_embeddings, guidance_scale=guidance_scale
+        )
+        
+        # Calculate the loss as the difference between predicted and target noise
+        loss = grad_scale * (noise_pred - noise)
+        loss = (loss - latents).detach() + latents
+        loss = (loss ** 2).mean()
+        
+        return loss
+
     
     def get_pds_loss(
         self, src_latents, tgt_latents, 
@@ -76,7 +95,37 @@ class StableDiffusion(nn.Module):
     ):
         
         # TODO: Implement the loss function for PDS
-        raise NotImplementedError("PDS is not implemented yet.")
+        # raise NotImplementedError("PDS is not implemented yet.")
+        
+        t = torch.randint(self.min_step, self.max_step, (1,)).to(self.device)
+        alpha_t_curr = self.alphas[t]
+        alpha_t_prev = self.alphas[t-1]
+        var = ((1 - alpha_t_prev) / (1 - alpha_t_curr) * (1 - alpha_t_curr / alpha_t_prev)).sqrt()
+
+        noise_t = torch.randn_like(src_latents)
+        noise_t_prev = torch.randn_like(src_latents)
+
+        def compute_latent(x, text_embedding):
+            x_t_curr = alpha_t_curr.sqrt() * x + (1 - alpha_t_curr).sqrt() * noise_t
+            x_t_prev = alpha_t_prev.sqrt() * x + (1 - alpha_t_prev).sqrt() * noise_t_prev
+
+            with torch.no_grad():
+                noise_pred = self.get_noise_preds(x_t_curr, t, text_embedding, guidance_scale)
+            pred_x0 = (x_t_curr - (1 - alpha_t_curr).sqrt() * noise_pred) / alpha_t_curr.sqrt()
+            mean = (1 - alpha_t_prev).sqrt() * pred_x0 + (1 - alpha_t_prev - var ** 2) * noise_pred
+
+            z = (x_t_prev - mean) / var
+
+            return z
+
+        z_src = compute_latent(src_latents, src_text_embedding)
+        z_tgt = compute_latent(tgt_latents, tgt_text_embedding)
+
+        loss = z_tgt - z_src
+        loss = (loss - tgt_latents).detach() + tgt_latents
+        loss = (loss ** 2).mean()
+
+        return loss
     
     
     @torch.no_grad()
